@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+relatorios/
+.env
+*.pem
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!**/ambientes/*.tfvars
+crash.log
+.terraform.lock.hcl.bak
