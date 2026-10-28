@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analise:
+    name: Análise estática e formatação (SAST)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      # O Ruff roda as regras do pycodestyle, pyflakes, isort, bugbear e as de segurança do bandit (S).
+      - run: ruff check aplicacao testes --output-format=github
+      - run: ruff format --check aplicacao testes
+
+  testes:
+    name: Testes (Python ${{ matrix.python }})
+    needs: analise
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Testes unitários e de integração com cobertura mínima de 85%
+        run: pytest --cov=aplicacao --cov-report=term-missing --cov-report=xml --junitxml=relatorios/junit.xml
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: relatorios-testes-py${{ matrix.python }}
+          path: |
+            relatorios/junit.xml
+            coverage.xml
+
+  dependencias:
+    name: Auditoria de dependências
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit==2.10.1
+      - run: pip-audit -r requirements.txt --strict
+
+  terraform:
+    name: Terraform (fmt, validate e test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.9.8
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+      - run: terraform test -test-directory=testes
