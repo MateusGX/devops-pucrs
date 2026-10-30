@@ -1,0 +1,37 @@
+# Ambiente local: API + Prometheus + Grafana.
+# docker compose up -d --build   ->   API :8000 · Prometheus :9090 · Grafana :3000
+services:
+  api:
+    build:
+      context: .
+      args:
+        VERSAO: local
+    image: afazeres-api:local
+    environment:
+      AMBIENTE: desenvolvimento
+      NIVEL_LOG: DEBUG
+    ports:
+      - "8000:8000"
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./monitoramento/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoramento/alertas.yml:/etc/prometheus/alertas.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+    volumes:
+      - ./monitoramento/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoramento/grafana/paineis:/var/lib/grafana/paineis:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
