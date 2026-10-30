@@ -1,0 +1,30 @@
+groups:
+  - name: afazeres
+    rules:
+      - alert: AfazeresForaDoAr
+        expr: up{job="afazeres-api"} == 0
+        for: 1m
+        labels:
+          severidade: critica
+        annotations:
+          summary: "API Afazeres fora do ar"
+          description: "O Prometheus não consegue coletar métricas da API há mais de 1 minuto."
+
+      - alert: AfazeresTaxaDeErroAlta
+        expr: |
+          sum(rate(afazeres_requisicoes_http_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(afazeres_requisicoes_http_total[5m])), 1e-9) > 0.05
+        for: 5m
+        labels:
+          severidade: aviso
+        annotations:
+          summary: "Taxa de erro 5xx acima de 5%"
+
+      - alert: AfazeresLatenciaAlta
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(afazeres_duracao_requisicao_segundos_bucket[5m]))) > 0.5
+        for: 5m
+        labels:
+          severidade: aviso
+        annotations:
+          summary: "Latência p95 acima de 500 ms"
