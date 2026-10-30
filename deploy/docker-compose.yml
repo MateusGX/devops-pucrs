@@ -1,0 +1,48 @@
+# Stack dos servidores, usada pelo scripts/deploy.sh nos hosts EC2.
+# IMAGEM_AFAZERES, AMBIENTE e SENHA_ADMIN_GRAFANA vêm do arquivo .env escrito pelo deploy.sh.
+services:
+  api:
+    image: ${IMAGEM_AFAZERES:?IMAGEM_AFAZERES é obrigatório}
+    env_file:
+      - ambientes/${AMBIENTE:?AMBIENTE é obrigatório}.env
+    environment:
+      VERSAO: ${VERSAO_AFAZERES:-desconhecida}
+    ports:
+      - "80:8000"
+    restart: unless-stopped
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${REGIAO_AWS:-us-east-1}
+        awslogs-group: /afazeres/${AMBIENTE}/aplicacao
+        awslogs-stream: api
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./monitoramento/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoramento/alertas.yml:/etc/prometheus/alertas.yml:ro
+      - dados-prometheus:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${SENHA_ADMIN_GRAFANA:?SENHA_ADMIN_GRAFANA é obrigatório}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoramento/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoramento/grafana/paineis:/var/lib/grafana/paineis:ro
+      - dados-grafana:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  dados-prometheus:
+  dados-grafana:
