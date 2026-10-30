@@ -1,0 +1,15 @@
+.git
+.github
+.venv
+.pytest_cache
+.ruff_cache
+.coverage
+coverage.xml
+relatorios
+testes
+infra
+deploy
+scripts
+monitoramento
+**/__pycache__
+*.md
