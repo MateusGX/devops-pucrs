@@ -1,0 +1,137 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cd-main
+  cancel-in-progress: false
+
+env:
+  REGISTRO: ghcr.io
+
+jobs:
+  imagem:
+    name: Build, varredura e push da imagem
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      imagem: ${{ steps.dados.outputs.imagem }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Nome e tag da imagem
+        id: dados
+        run: |
+          echo "versao=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "imagem=$REGISTRO/${GITHUB_REPOSITORY_OWNER,,}/afazeres-api:$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build da imagem Docker
+        uses: docker/build-push-action@v7
+        with:
+          load: true
+          build-args: VERSAO=${{ steps.dados.outputs.versao }}
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          tags: ${{ steps.dados.outputs.imagem }}
+
+      - name: Varredura de vulnerabilidades da imagem (Trivy)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.58.1 \
+            image --exit-code 1 --severity CRITICAL --ignore-unfixed --no-progress ${{ steps.dados.outputs.imagem }}
+
+      - name: Smoke test do container
+        run: |
+          docker run -d -p 8000:8000 ${{ steps.dados.outputs.imagem }}
+          curl -fsS --retry 20 --retry-delay 2 --retry-all-errors localhost:8000/health
+          ./scripts/smoke_test.sh http://localhost:8000
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRO }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push para o GitHub Container Registry
+        run: docker push ${{ steps.dados.outputs.imagem }}
+
+  seguranca-dinamica:
+    name: Teste dinâmico de segurança (OWASP ZAP)
+    needs: imagem
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRO }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Sobe a imagem publicada
+        run: |
+          docker run -d -p 8000:8000 ${{ needs.imagem.outputs.imagem }}
+          curl -fsS --retry 20 --retry-delay 2 --retry-all-errors localhost:8000/health
+      - name: Varredura ZAP
+        run: |
+          mkdir -m 777 zap
+          docker run --rm --network host -v "$PWD/zap:/zap/wrk" ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://localhost:8000 -r relatorio-zap.html -I
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: relatorio-zap
+          path: zap/relatorio-zap.html
+
+  deploy-homologacao:
+    name: Deploy em homologação
+    needs: [imagem, seguranca-dinamica]
+    runs-on: ubuntu-latest
+    environment: homologacao
+    env:
+      SERVIDOR_DEPLOY: ${{ secrets.SERVIDOR_DEPLOY }}
+      CHAVE_SSH_DEPLOY: ${{ secrets.CHAVE_SSH_DEPLOY }}
+      USUARIO_REGISTRO: ${{ github.actor }}
+      TOKEN_REGISTRO: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - if: env.SERVIDOR_DEPLOY == ''
+        run: echo "::notice::Segredos de deploy ausentes em homologacao. Deploy ignorado."
+      - name: Deploy via SSH com rollback automático e smoke test
+        if: env.SERVIDOR_DEPLOY != ''
+        run: |
+          ./scripts/deploy_remoto.sh ${{ needs.imagem.outputs.imagem }} homologacao
+          ./scripts/smoke_test.sh "http://$SERVIDOR_DEPLOY"
+
+  deploy-producao:
+    name: Deploy em produção (aprovação manual)
+    needs: [imagem, deploy-homologacao]
+    runs-on: ubuntu-latest
+    environment: producao
+    env:
+      SERVIDOR_DEPLOY: ${{ secrets.SERVIDOR_DEPLOY }}
+      CHAVE_SSH_DEPLOY: ${{ secrets.CHAVE_SSH_DEPLOY }}
+      USUARIO_REGISTRO: ${{ github.actor }}
+      TOKEN_REGISTRO: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - if: env.SERVIDOR_DEPLOY == ''
+        run: echo "::notice::Segredos de deploy ausentes em producao. Deploy ignorado."
+      - name: Deploy via SSH com rollback automático e smoke test
+        if: env.SERVIDOR_DEPLOY != ''
+        run: |
+          ./scripts/deploy_remoto.sh ${{ needs.imagem.outputs.imagem }} producao
+          ./scripts/smoke_test.sh "http://$SERVIDOR_DEPLOY"
