@@ -1,14 +1,14 @@
 # syntax=docker/dockerfile:1
 
 # ---- estágio de build: instala as dependências num virtualenv isolado
-FROM python:3.12-slim AS build
+FROM python:3.15-slim AS build
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /build
 COPY requirements.txt .
 RUN python -m venv /opt/venv && /opt/venv/bin/pip install -r requirements.txt
 
 # ---- estágio final: imagem enxuta, usuário sem privilégio e health check
-FROM python:3.12-slim
+FROM python:3.15-slim
 ARG VERSAO=0.0.0-dev
 LABEL org.opencontainers.image.title="afazeres-api" \
       org.opencontainers.image.description="Afazeres API (DevOps na Prática)" \
